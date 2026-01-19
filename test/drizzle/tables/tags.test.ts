@@ -127,6 +127,17 @@ describe("tagsTable", () => {
 			);
 			expect(hasIndex).toBe(true);
 		});
+
+		it("should have a unique composite index on name and organizationId", () => {
+			const hasUniqueIndex = tableConfig.indexes.some(
+				(index) =>
+					index.config.columns.length === 2 &&
+					getColumnName(index.config.columns[0]) === "name" &&
+					getColumnName(index.config.columns[1]) === "organization_id" &&
+					index.config.unique,
+			);
+			expect(hasUniqueIndex).toBe(true);
+		});
 	});
 	describe("tagsTable Relations", () => {
 		beforeAll(() => {
@@ -325,7 +336,7 @@ describe("tagsTable", () => {
 			expect(organizationIdColumn?.notNull).toBe(true);
 		});
 
-		it("should have correct foreign key actions for all relations", () => {
+		it("should define correct foreign key fields and references", () => {
 			const creatorRelation = capturedRelations.creator;
 			expect(creatorRelation?.config?.fields).toBeDefined();
 			expect(creatorRelation?.config?.references).toBeDefined();
@@ -353,6 +364,23 @@ describe("tagsTable", () => {
 			expect(organizationRelation?.config?.references?.[0]).toBe(
 				organizationsTable.id,
 			);
+		});
+
+		it("should have id as primary key", () => {
+			const idColumn = tableConfig.columns.find((col) => col.name === "id");
+			expect(idColumn?.primary).toBe(true);
+		});
+
+		it("should have default for createdAt and no default for updatedAt", () => {
+			const createdAtColumn = tableConfig.columns.find(
+				(col) => col.name === "created_at",
+			);
+			const updatedAtColumn = tableConfig.columns.find(
+				(col) => col.name === "updated_at",
+			);
+
+			expect(createdAtColumn?.hasDefault).toBe(true);
+			expect(updatedAtColumn?.onUpdateFn).toBeDefined();
 		});
 	});
 
