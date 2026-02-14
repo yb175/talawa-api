@@ -27,6 +27,7 @@ import {
 	Query_signIn,
 } from "../documentNodes";
 
+
 // Admin auth (fetched once per suite)
 let adminToken: string | null = null;
 let adminUserId: string | null = null;
@@ -226,7 +227,240 @@ suite("Mutation createEventVolunteer - Integration Tests", () => {
 		// Extra delay after all cleanup to prevent affecting next test
 		await new Promise((resolve) => setTimeout(resolve, 500));
 	});
+	test("Race test: concurrent THIS_INSTANCE_ONLY calls should not create duplicates", async () => {
+		const organization = await createTestOrganization();
+		testCleanupFunctions.push(organization.cleanup);
 
+		const testUser = await createTestUser();
+		testCleanupFunctions.push(testUser.cleanup);
+
+		const { token: adminAuth, userId: creatorId } = await ensureAdminAuth();
+
+		// Admin membership
+		await mercuriusClient.mutate(Mutation_createOrganizationMembership, {
+			headers: { authorization: `bearer ${adminAuth}` },
+			variables: {
+				input: {
+					memberId: creatorId,
+					organizationId: organization.orgId,
+					role: "administrator",
+				},
+			},
+		});
+
+		// Regular membership
+		await mercuriusClient.mutate(Mutation_createOrganizationMembership, {
+			headers: { authorization: `bearer ${adminAuth}` },
+			variables: {
+				input: {
+					memberId: testUser.userId,
+					organizationId: organization.orgId,
+					role: "regular",
+				},
+			},
+		});
+
+		// Setup recurring event + instance
+		const startAt = new Date("2024-12-01T10:00:00Z");
+		const endAt = new Date("2024-12-01T12:00:00Z");
+
+		const [template] = await server.drizzleClient
+			.insert(eventsTable)
+			.values({
+				name: "Race Test Event",
+				description: "Testing concurrency",
+				startAt,
+				endAt,
+				organizationId: organization.orgId,
+				creatorId,
+				isPublic: true,
+				isRegisterable: true,
+				isRecurringEventTemplate: true,
+			})
+			.returning();
+		assertToBeNonNullish(template);
+		const [recurrenceRule] = await server.drizzleClient
+			.insert(recurrenceRulesTable)
+			.values({
+				baseRecurringEventId: template.id,
+				frequency: "DAILY",
+				interval: 1,
+				count: 1,
+				organizationId: organization.orgId,
+				creatorId,
+				recurrenceRuleString: "RRULE:FREQ=DAILY;INTERVAL=1;COUNT=1",
+				recurrenceStartDate: startAt,
+				latestInstanceDate: startAt,
+			})
+			.returning();
+		assertToBeNonNullish(recurrenceRule);
+		assertToBeNonNullish(template);
+		const [instance] = await server.drizzleClient
+			.insert(recurringEventInstancesTable)
+			.values({
+				baseRecurringEventId: template.id,
+				recurrenceRuleId: recurrenceRule.id,
+				originalSeriesId: template.id,
+				originalInstanceStartTime: startAt,
+				actualStartTime: startAt,
+				actualEndTime: endAt,
+				organizationId: organization.orgId,
+				sequenceNumber: 1,
+				totalCount: 1,
+			})
+			.returning();
+		assertToBeNonNullish(instance);
+		const instanceId = instance.id;
+
+		const [r1, r2] = await Promise.all([
+			mercuriusClient.mutate(Mutation_createEventVolunteer, {
+				headers: { authorization: `bearer ${adminAuth}` },
+				variables: {
+					input: {
+						userId: testUser.userId,
+						eventId: template.id,
+						scope: "THIS_INSTANCE_ONLY",
+						recurringEventInstanceId: instanceId,
+					},
+				},
+			}),
+			mercuriusClient.mutate(Mutation_createEventVolunteer, {
+				headers: { authorization: `bearer ${adminAuth}` },
+				variables: {
+					input: {
+						userId: testUser.userId,
+						eventId: template.id,
+						scope: "THIS_INSTANCE_ONLY",
+						recurringEventInstanceId: instanceId,
+					},
+				},
+			}),
+		]);
+
+		expect(r1.errors).toBeUndefined();
+		expect(r2.errors).toBeUndefined();
+		assertToBeNonNullish(r1.data?.createEventVolunteer);
+		assertToBeNonNullish(r2.data?.createEventVolunteer);
+		expect(r1.data.createEventVolunteer.id)
+			.toBe(r2.data.createEventVolunteer.id);
+	});
+	test("non test: concurrent THIS_INSTANCE_ONLY calls should not create duplicates", async () => {
+		const organization = await createTestOrganization();
+		testCleanupFunctions.push(organization.cleanup);
+
+		const testUser = await createTestUser();
+		testCleanupFunctions.push(testUser.cleanup);
+
+		const { token: adminAuth, userId: creatorId } = await ensureAdminAuth();
+
+		// Admin membership
+		await mercuriusClient.mutate(Mutation_createOrganizationMembership, {
+			headers: { authorization: `bearer ${adminAuth}` },
+			variables: {
+				input: {
+					memberId: creatorId,
+					organizationId: organization.orgId,
+					role: "administrator",
+				},
+			},
+		});
+
+		// Regular membership
+		await mercuriusClient.mutate(Mutation_createOrganizationMembership, {
+			headers: { authorization: `bearer ${adminAuth}` },
+			variables: {
+				input: {
+					memberId: testUser.userId,
+					organizationId: organization.orgId,
+					role: "regular",
+				},
+			},
+		});
+
+		// Setup recurring event + instance
+		const startAt = new Date("2024-12-01T10:00:00Z");
+		const endAt = new Date("2024-12-01T12:00:00Z");
+
+		const [template] = await server.drizzleClient
+			.insert(eventsTable)
+			.values({
+				name: "Race Test Event",
+				description: "Testing concurrency",
+				startAt,
+				endAt,
+				organizationId: organization.orgId,
+				creatorId,
+				isPublic: true,
+				isRegisterable: true,
+				isRecurringEventTemplate: true,
+			})
+			.returning();
+		assertToBeNonNullish(template);
+		const [recurrenceRule] = await server.drizzleClient
+			.insert(recurrenceRulesTable)
+			.values({
+				baseRecurringEventId: template.id,
+				frequency: "DAILY",
+				interval: 1,
+				count: 1,
+				organizationId: organization.orgId,
+				creatorId,
+				recurrenceRuleString: "RRULE:FREQ=DAILY;INTERVAL=1;COUNT=1",
+				recurrenceStartDate: startAt,
+				latestInstanceDate: startAt,
+			})
+			.returning();
+		assertToBeNonNullish(recurrenceRule);
+		assertToBeNonNullish(template);
+		const [instance] = await server.drizzleClient
+			.insert(recurringEventInstancesTable)
+			.values({
+				baseRecurringEventId: template.id,
+				recurrenceRuleId: recurrenceRule.id,
+				originalSeriesId: template.id,
+				originalInstanceStartTime: startAt,
+				actualStartTime: startAt,
+				actualEndTime: endAt,
+				organizationId: organization.orgId,
+				sequenceNumber: 1,
+				totalCount: 1,
+			})
+			.returning();
+		assertToBeNonNullish(instance);
+		const instanceId = instance.id;
+
+		const [r1, r2] = [
+			await mercuriusClient.mutate(Mutation_createEventVolunteer, {
+				headers: { authorization: `bearer ${adminAuth}` },
+				variables: {
+					input: {
+						userId: testUser.userId,
+						eventId: template.id,
+						scope: "THIS_INSTANCE_ONLY",
+						recurringEventInstanceId: instanceId,
+					},
+				},
+			}),
+			await mercuriusClient.mutate(Mutation_createEventVolunteer, {
+				headers: { authorization: `bearer ${adminAuth}` },
+				variables: {
+					input: {
+						userId: testUser.userId,
+						eventId: template.id,
+						scope: "THIS_INSTANCE_ONLY",
+						recurringEventInstanceId: instanceId,
+					},
+				},
+			}),
+		];
+
+		expect(r1.errors).toBeUndefined();
+		expect(r2.errors).toBeUndefined();
+		assertToBeNonNullish(r1.data?.createEventVolunteer);
+		assertToBeNonNullish(r2.data?.createEventVolunteer);
+		expect(r1.data.createEventVolunteer.id)
+			.toBe(r2.data.createEventVolunteer.id);
+	});
 	test("Integration: Unauthenticated user cannot create event volunteer", async () => {
 		// Add delay at start of first test
 		await new Promise((resolve) => setTimeout(resolve, 400));
